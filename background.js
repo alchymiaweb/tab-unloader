@@ -17,6 +17,38 @@ async function unloadOtherTabs(currentTabId) {
   );
 }
 
+// Track how long each tab was focused when switched away
+const tabActivatedAt = new Map(); // tabId -> timestamp activated
+const tabLastDuration = new Map(); // tabId -> duration active (ms)
+const GLANCED_THRESHOLD_MS = 5000; // viewed for <= 5 seconds
+
+chrome.tabs.onActivated.addListener(({ tabId }) => {
+  const now = Date.now();
+  for (const [id, activatedTime] of tabActivatedAt.entries()) {
+    if (id !== tabId) {
+      tabLastDuration.set(id, now - activatedTime);
+      tabActivatedAt.delete(id);
+    }
+  }
+  tabActivatedAt.set(tabId, now);
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  tabActivatedAt.delete(tabId);
+  tabLastDuration.delete(tabId);
+});
+
+async function unloadGlancedTabs(maxDurationMs = GLANCED_THRESHOLD_MS) {
+  const tabs = await chrome.tabs.query({ active: false, discarded: false });
+  const glancedTabs = tabs.filter((t) => {
+    if (t.pinned) return false;
+    const duration = tabLastDuration.get(t.id);
+    return typeof duration === "number" && duration <= maxDurationMs;
+  });
+
+  await Promise.all(glancedTabs.map((t) => chrome.tabs.discard(t.id)));
+}
+
 // removeAll first so a reload never hits a duplicate-id error that silently skips creation.
 function setupMenus() {
   chrome.contextMenus.removeAll(() => {
@@ -30,12 +62,21 @@ function setupMenus() {
       title: "Unload all other tabs",
       contexts: ["all"],
     });
+    chrome.contextMenus.create({
+      id: "unload-glanced",
+      title: "Unload glanced tabs (opened < 5s)",
+      contexts: ["all"],
+    });
     // Experimental: the "tab" context targets the tab-strip right-click menu. Chrome versions
     // that don't support it reject the enum value, so create it separately and ignore failure.
     // Unsupported Chrome versions throw synchronously on the enum value, hence the try/catch.
     try {
       chrome.contextMenus.create(
         { id: "unload-tab-strip", title: "Unload tab", contexts: ["tab"] },
+        () => void chrome.runtime.lastError
+      );
+      chrome.contextMenus.create(
+        { id: "unload-glanced-tab-strip", title: "Unload glanced tabs (opened < 5s)", contexts: ["tab"] },
         () => void chrome.runtime.lastError
       );
     } catch {
@@ -50,6 +91,9 @@ chrome.runtime.onStartup.addListener(setupMenus);
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === "unload-tab" || info.menuItemId === "unload-tab-strip") unloadTab(tab);
   if (info.menuItemId === "unload-others") unloadOtherTabs(tab?.id);
+  if (info.menuItemId === "unload-glanced" || info.menuItemId === "unload-glanced-tab-strip") {
+    unloadGlancedTabs();
+  }
 });
 
 chrome.commands.onCommand.addListener(async (command) => {
@@ -65,6 +109,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       await unloadTab(tab);
     } else if (msg.type === "unload-others") {
       await unloadOtherTabs(msg.tabId);
+    } else if (msg.type === "unload-glanced") {
+      await unloadGlancedTabs(msg.maxDurationMs);
     }
     sendResponse({ ok: true });
   })();
