@@ -17,6 +17,29 @@ async function unloadOtherTabs(currentTabId) {
   );
 }
 
+function getTabHostname(url) {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+async function unloadSameDomainTabs(targetTab) {
+  if (!targetTab || !targetTab.url) return;
+  const targetHost = getTabHostname(targetTab.url);
+  if (!targetHost) return;
+
+  const tabs = await chrome.tabs.query({ discarded: false });
+  const matchingTabs = tabs.filter(
+    (t) => !t.pinned && getTabHostname(t.url) === targetHost
+  );
+
+  for (const t of matchingTabs) {
+    await unloadTab(t);
+  }
+}
+
 // removeAll first so a reload never hits a duplicate-id error that silently skips creation.
 function setupMenus() {
   chrome.contextMenus.removeAll(() => {
@@ -30,12 +53,21 @@ function setupMenus() {
       title: "Unload all other tabs",
       contexts: ["all"],
     });
+    chrome.contextMenus.create({
+      id: "unload-same-domain",
+      title: "Unload tabs from this domain",
+      contexts: ["all"],
+    });
     // Experimental: the "tab" context targets the tab-strip right-click menu. Chrome versions
     // that don't support it reject the enum value, so create it separately and ignore failure.
     // Unsupported Chrome versions throw synchronously on the enum value, hence the try/catch.
     try {
       chrome.contextMenus.create(
         { id: "unload-tab-strip", title: "Unload tab", contexts: ["tab"] },
+        () => void chrome.runtime.lastError
+      );
+      chrome.contextMenus.create(
+        { id: "unload-same-domain-strip", title: "Unload tabs from this domain", contexts: ["tab"] },
         () => void chrome.runtime.lastError
       );
     } catch {
@@ -50,6 +82,9 @@ chrome.runtime.onStartup.addListener(setupMenus);
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === "unload-tab" || info.menuItemId === "unload-tab-strip") unloadTab(tab);
   if (info.menuItemId === "unload-others") unloadOtherTabs(tab?.id);
+  if (info.menuItemId === "unload-same-domain" || info.menuItemId === "unload-same-domain-strip") {
+    unloadSameDomainTabs(tab);
+  }
 });
 
 chrome.commands.onCommand.addListener(async (command) => {
@@ -65,6 +100,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       await unloadTab(tab);
     } else if (msg.type === "unload-others") {
       await unloadOtherTabs(msg.tabId);
+    } else if (msg.type === "unload-same-domain") {
+      const tab = await chrome.tabs.get(msg.tabId);
+      await unloadSameDomainTabs(tab);
     }
     sendResponse({ ok: true });
   })();
