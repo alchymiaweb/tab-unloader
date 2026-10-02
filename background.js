@@ -17,6 +17,20 @@ async function unloadOtherTabs(currentTabId) {
   );
 }
 
+const INACTIVE_THRESHOLD_MS = 60 * 60 * 1000; // 1 hour
+
+async function unloadInactiveTabs(thresholdMs = INACTIVE_THRESHOLD_MS) {
+  const now = Date.now();
+  const tabs = await chrome.tabs.query({ active: false, discarded: false });
+  const inactiveTabs = tabs.filter((t) => {
+    if (t.pinned) return false;
+    const lastAccess = t.lastAccessed || 0;
+    return lastAccess > 0 && now - lastAccess >= thresholdMs;
+  });
+
+  await Promise.all(inactiveTabs.map((t) => chrome.tabs.discard(t.id)));
+}
+
 // removeAll first so a reload never hits a duplicate-id error that silently skips creation.
 function setupMenus() {
   chrome.contextMenus.removeAll(() => {
@@ -30,12 +44,21 @@ function setupMenus() {
       title: "Unload all other tabs",
       contexts: ["all"],
     });
+    chrome.contextMenus.create({
+      id: "unload-inactive",
+      title: "Unload inactive tabs (> 1 hour)",
+      contexts: ["all"],
+    });
     // Experimental: the "tab" context targets the tab-strip right-click menu. Chrome versions
     // that don't support it reject the enum value, so create it separately and ignore failure.
     // Unsupported Chrome versions throw synchronously on the enum value, hence the try/catch.
     try {
       chrome.contextMenus.create(
         { id: "unload-tab-strip", title: "Unload tab", contexts: ["tab"] },
+        () => void chrome.runtime.lastError
+      );
+      chrome.contextMenus.create(
+        { id: "unload-inactive-tab-strip", title: "Unload inactive tabs (> 1 hour)", contexts: ["tab"] },
         () => void chrome.runtime.lastError
       );
     } catch {
@@ -50,6 +73,9 @@ chrome.runtime.onStartup.addListener(setupMenus);
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === "unload-tab" || info.menuItemId === "unload-tab-strip") unloadTab(tab);
   if (info.menuItemId === "unload-others") unloadOtherTabs(tab?.id);
+  if (info.menuItemId === "unload-inactive" || info.menuItemId === "unload-inactive-tab-strip") {
+    unloadInactiveTabs();
+  }
 });
 
 chrome.commands.onCommand.addListener(async (command) => {
@@ -65,6 +91,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       await unloadTab(tab);
     } else if (msg.type === "unload-others") {
       await unloadOtherTabs(msg.tabId);
+    } else if (msg.type === "unload-inactive") {
+      await unloadInactiveTabs(msg.thresholdMs);
     }
     sendResponse({ ok: true });
   })();
