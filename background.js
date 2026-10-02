@@ -38,6 +38,10 @@ function setupMenus() {
         { id: "unload-tab-strip", title: "Unload tab", contexts: ["tab"] },
         () => void chrome.runtime.lastError
       );
+      chrome.contextMenus.create(
+        { id: "unload-others-tab-strip", title: "Unload other tabs", contexts: ["tab"] },
+        () => void chrome.runtime.lastError
+      );
     } catch {
       console.info("Tab-strip context menu not supported in this Chrome version.");
     }
@@ -49,7 +53,7 @@ chrome.runtime.onStartup.addListener(setupMenus);
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === "unload-tab" || info.menuItemId === "unload-tab-strip") unloadTab(tab);
-  if (info.menuItemId === "unload-others") unloadOtherTabs(tab?.id);
+  if (info.menuItemId === "unload-others" || info.menuItemId === "unload-others-tab-strip") unloadOtherTabs(tab?.id);
 });
 
 chrome.commands.onCommand.addListener(async (command) => {
