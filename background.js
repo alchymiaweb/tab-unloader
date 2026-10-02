@@ -17,6 +17,15 @@ async function unloadOtherTabs(currentTabId) {
   );
 }
 
+async function unloadTabsToTheRight(targetTab) {
+  if (!targetTab) return;
+  const tabs = await chrome.tabs.query({ windowId: targetTab.windowId });
+  const tabsToRight = tabs.filter(
+    (t) => t.index > targetTab.index && !t.pinned && !t.discarded && !t.active
+  );
+  await Promise.all(tabsToRight.map((t) => chrome.tabs.discard(t.id)));
+}
+
 // removeAll first so a reload never hits a duplicate-id error that silently skips creation.
 function setupMenus() {
   chrome.contextMenus.removeAll(() => {
@@ -30,12 +39,21 @@ function setupMenus() {
       title: "Unload all other tabs",
       contexts: ["all"],
     });
+    chrome.contextMenus.create({
+      id: "unload-right",
+      title: "Unload tabs to the right",
+      contexts: ["all"],
+    });
     // Experimental: the "tab" context targets the tab-strip right-click menu. Chrome versions
     // that don't support it reject the enum value, so create it separately and ignore failure.
     // Unsupported Chrome versions throw synchronously on the enum value, hence the try/catch.
     try {
       chrome.contextMenus.create(
         { id: "unload-tab-strip", title: "Unload tab", contexts: ["tab"] },
+        () => void chrome.runtime.lastError
+      );
+      chrome.contextMenus.create(
+        { id: "unload-right-tab-strip", title: "Unload tabs to the right", contexts: ["tab"] },
         () => void chrome.runtime.lastError
       );
     } catch {
@@ -50,6 +68,7 @@ chrome.runtime.onStartup.addListener(setupMenus);
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === "unload-tab" || info.menuItemId === "unload-tab-strip") unloadTab(tab);
   if (info.menuItemId === "unload-others") unloadOtherTabs(tab?.id);
+  if (info.menuItemId === "unload-right" || info.menuItemId === "unload-right-tab-strip") unloadTabsToTheRight(tab);
 });
 
 chrome.commands.onCommand.addListener(async (command) => {
@@ -65,6 +84,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       await unloadTab(tab);
     } else if (msg.type === "unload-others") {
       await unloadOtherTabs(msg.tabId);
+    } else if (msg.type === "unload-right") {
+      const tab = await chrome.tabs.get(msg.tabId);
+      await unloadTabsToTheRight(tab);
     }
     sendResponse({ ok: true });
   })();
