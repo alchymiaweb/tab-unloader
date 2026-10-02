@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body { width: 360px; margin: 0; padding: 8px; font: 13px system-ui, sans-serif; }
+      #filter { box-sizing: border-box; width: 100%; padding: 6px; margin-bottom: 6px; }
+      #list { max-height: 420px; overflow-y: auto; }
+      .tab { display: flex; align-items: center; gap: 6px; padding: 4px 2px; }
+      .tab.discarded .title { opacity: 0.45; }
+      .tab img { width: 16px; height: 16px; flex: none; }
+      .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .tab button { flex: none; cursor: pointer; }
+      .tab button:disabled { cursor: default; }
+      #others { display: block; width: 100%; margin-top: 6px; padding: 6px; cursor: pointer; }
+      #donate {
+        display: block; margin-top: 8px; padding: 8px; text-align: center;
+        background: #ffdd00; color: #000; font-weight: 600; text-decoration: none;
+        border: 2px solid #000; border-radius: 8px;
+      }
+      #donate:hover { background: #ffe84d; }
+    </style>
+  </head>
+  <body>
+    <input id="filter" placeholder="Filter tabs…" autofocus />
+    <div id="list"></div>
+    <button id="others">Unload all other tabs</button>
+    <a id="donate" href="https://www.paypal.com/donate?business=felipe.andrada%40gmail.com&currency_code=USD&item_name=Tab+Unloader+-+AI+credit" target="_blank" rel="noopener">⚡ Buy me an AI credit</a>
+    <script src="popup.js"></script>
+  </body>
+</html>
