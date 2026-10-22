@@ -1,6 +1,6 @@
 # Tab Unloader improvement plan
 
-Status: feature **01** scope revised on 2026-10-22: remove per-tab/potential-savings estimates and row tooltips; refresh actual system RAM every second while the popup is open. Earlier estimate/calibration and tooltip requirements in historical verification notes are superseded. All 18 Node checks and the latest Chrome smoke check pass. Feature **02** is untouched.
+Status: feature **02** implemented on 2026-10-22: serialized menu rebuilding, explicit registration diagnostics, and right-click target regression checks. All 22 Node checks and native menu/shortcut checks on Chrome for Testing 156.0.8078.47 (Stable channel) pass; see the verification log. Feature **01** retains its revised measured-only scope: no estimates or row tooltips, with actual system RAM refreshed every second while the popup is open. Earlier estimate/calibration and tooltip requirements are superseded. Features **03–06** are not started.
 
 ## Confirmed scope
 
@@ -75,11 +75,11 @@ Checked against the official documentation on 2026-10-21; actual browser behavio
 
 **Goal:** right-click a browser tab and choose “Unload tab” without opening the extension.
 
-- [ ] Test the existing `unload-tab-strip` registration on a Stable Chrome version supporting the Chrome 150 addition and record its exact version/platform. Mock unsupported-context behavior as well; do not install an obsolete browser just to test the fallback.
-- [ ] Retain explicit `contexts: ["tab"]` registration and the existing shared unload function. Keep page and extension-icon menu fallbacks and `Alt+U` working.
-- [ ] Gracefully handle an unsupported context, but distinguish it from unrelated registration failures instead of silently swallowing every error.
-- [ ] Always act on the right-clicked tab, even when it is inactive or other tabs are highlighted. Use the shared single-tab policy; never interpret browser highlighting as popup bulk selection.
-- [ ] Keep fixed menu IDs and serialize menu rebuilding across install, update, restart, extension reload, and future language changes. Report creation errors from callbacks as well as synchronous throws. Update README claims to distinguish Chrome 150 introduction from the versions actually tested.
+- [x] Test the existing `unload-tab-strip` registration on a Stable Chrome version supporting the Chrome 150 addition and record its exact version/platform. Mock unsupported-context behavior as well; do not install an obsolete browser just to test the fallback.
+- [x] Retain explicit `contexts: ["tab"]` registration and the existing shared unload function. Keep page and extension-icon menu fallbacks and `Alt+U` working.
+- [x] Gracefully handle an unsupported context, but distinguish it from unrelated registration failures instead of silently swallowing every error.
+- [x] Always act on the right-clicked tab, even when it is inactive or other tabs are highlighted. Use the shared single-tab policy; never interpret browser highlighting as popup bulk selection.
+- [x] Keep fixed menu IDs and serialize menu rebuilding across install, update, restart, extension reload, and future language changes. Report creation errors from callbacks as well as synchronous throws. Update README claims to distinguish Chrome 150 introduction from the versions actually tested.
 
 **Files:** `background.js`, `README.md`.
 
@@ -159,6 +159,16 @@ Checked against the official documentation on 2026-10-21; actual browser behavio
 - [ ] README and final store screenshots describe only verified behavior and the final permissions (`tabs`, `contextMenus`, `system.memory`, `storage`); all memory figures/caveats remain truthful. No new analytics, website permissions, remote code, or dependency/build tooling appears.
 
 ## Verification log
+
+### Feature 02 implementation and native verification — 2026-10-22
+
+- `node checks.cjs`: 22/22 checks pass. Four new checks cover serialized install/startup/explicit rebuilds (with delayed removal and creation callbacks), unsupported-context throws and callback errors, unrelated creation/removal failures and recovery, and single right-click target behavior. Existing popup, bulk, race, and privacy checks remain passing.
+- Browser: Chrome for Testing **156.0.8078.47**, identified as the Stable channel by the official Chrome for Testing channel manifest on 2026-10-22; Ubuntu **24.04.4 LTS**, Linux x86_64 / WSL2 kernel **6.6.87.2-microsoft-standard-WSL2**. Headed, isolated unpacked-extension profile under Xvfb; native mouse and keyboard events delivered through XTest, tab state inspected through CDP. No popup was needed for menu actions.
+- Native tab-strip cases pass: right-click an inactive tab while all three tabs are highlighted and only that target unloads; an active target switches past an unloaded sibling to a loaded sibling; an already-unloaded target stays unloaded without changing the active tab; the only tab in a window stays loaded and active. Screenshots show exactly one `Unload tab` entry.
+- Native fallbacks pass: the page submenu's `Unload all other tabs` discards its eligible sibling but preserves the active tab; `Alt+U` switches to a loaded sibling and discards the invoking active tab; the extension-icon menu's `Unload this tab (keep open)` does the same. Existing menu labels and IDs are preserved.
+- Three overlapping real `setupMenus()` calls complete without registration errors or duplicate entries. Native menu interaction still works after an extension reload and after forcibly stopping the worker: clicking the retained menu wakes the worker and discards the correct target. The first reload attempt exposed Developer mode being off in the test profile, disabling the unpacked extension; enabling Developer mode resolves this fixture issue and the repeated reload passes.
+- Unsupported contexts and closed/missing menu targets are covered by Node fixtures, including preservation of menu/shortcut fallbacks and closed-tab skip diagnostics; no obsolete browser is installed. Real-world closed-tab timing, browser updates, other OS/browser versions, and human assistive-technology checks are not claimed as tested. Worker capture reports no uncaught exceptions; expected skip diagnostics contain only outcome codes and tab IDs.
+- Native menu screenshots are captured in the isolated `/tmp/tab-unloader-feature02-MrjAVM/` verification directory. No popup files, permissions, dependencies, sorting, selection, settings, or localization are changed. Stop for review before feature **03**; no commit, push, or publication is performed.
 
 ### 2026-10-22 tooltip removal
 

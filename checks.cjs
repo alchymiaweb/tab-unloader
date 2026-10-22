@@ -14,6 +14,12 @@ function workerFixture(initialTabs, hooks = {}) {
   const state = new Map(initialTabs.map((value) => [value.id, { ...value }]));
   const calls = { query: [], get: [], update: [], discard: [] };
   const diagnostics = [];
+  const menus = new Map();
+  const menuCalls = [];
+  function menuCallback(callback, error) {
+    chrome.runtime.lastError = error;
+    try { callback(); } finally { delete chrome.runtime.lastError; }
+  }
   const chrome = {
     tabs: {
       async query(query) {
@@ -49,7 +55,27 @@ function workerFixture(initialTabs, hooks = {}) {
       },
     },
     runtime: { onInstalled: event(), onStartup: event(), onMessage: event() },
-    contextMenus: { onClicked: event() },
+    contextMenus: {
+      onClicked: event(),
+      removeAll(callback) {
+        menuCalls.push("remove");
+        const removal = hooks.removeMenus?.();
+        void Promise.resolve(removal).then((error) => {
+          if (!error) menus.clear();
+          menuCallback(callback, error);
+        });
+      },
+      create(properties, callback) {
+        menuCalls.push(properties.id);
+        const creation = hooks.createMenu?.(properties);
+        void Promise.resolve(creation).then((error) => {
+          if (!error && menus.has(properties.id)) error = { message: "Cannot create item with duplicate id" };
+          if (!error) menus.set(properties.id, plain(properties));
+          menuCallback(callback, error);
+        });
+        return properties.id;
+      },
+    },
     commands: { onCommand: event() },
   };
   for (const name of ["onCreated", "onUpdated", "onRemoved", "onActivated", "onAttached", "onDetached", "onReplaced", "onMoved"]) {
@@ -70,7 +96,7 @@ function workerFixture(initialTabs, hooks = {}) {
     assert.equal(responses, 1, "Respond exactly once");
     return response;
   }
-  return { chrome, state, hooks, calls, diagnostics, request };
+  return { chrome, state, hooks, calls, diagnostics, menus, menuCalls, setupMenus: context.setupMenus, request };
 }
 
 class Element {
@@ -252,6 +278,118 @@ async function main() {
     assert.ok(!JSON.stringify(worker.diagnostics).includes("PRIVATE"));
     assert.equal(worker.chrome.runtime.onInstalled.listeners.length, 1);
     assert.equal(worker.chrome.runtime.onStartup.listeners.length, 1);
+  });
+
+  await check("menu rebuilds serialize lifecycle and explicit requests with fixed IDs", async () => {
+    let finishRemoval;
+    let finishCreation;
+    const worker = workerFixture([], {
+      removeMenus: () => new Promise((resolve) => { finishRemoval = resolve; }),
+      createMenu: () => new Promise((resolve) => { finishCreation = resolve; }),
+    });
+    const installed = worker.chrome.runtime.onInstalled.listeners[0]();
+    const startup = worker.chrome.runtime.onStartup.listeners[0]();
+    const rebuilt = worker.setupMenus();
+    await settle();
+    assert.deepEqual(worker.menuCalls, ["remove"]);
+    worker.hooks.removeMenus = undefined;
+    finishRemoval();
+    await settle();
+    assert.deepEqual(worker.menuCalls, ["remove", "unload-tab"]);
+    worker.hooks.createMenu = undefined;
+    finishCreation();
+    await Promise.all([installed, startup, rebuilt]);
+    const sequence = ["remove", "unload-tab", "unload-others", "unload-tab-strip"];
+    assert.deepEqual(worker.menuCalls, [...sequence, ...sequence, ...sequence]);
+    assert.deepEqual([...worker.menus.values()], [
+      { id: "unload-tab", title: "Unload this tab (keep open)", contexts: ["all"] },
+      { id: "unload-others", title: "Unload all other tabs", contexts: ["all"] },
+      { id: "unload-tab-strip", title: "Unload tab", contexts: ["tab"] },
+    ]);
+    assert.deepEqual(worker.diagnostics, []);
+  });
+
+  await check("unsupported tab contexts preserve fallbacks for throws and callback errors", async () => {
+    for (const synchronous of [true, false]) {
+      const worker = workerFixture([tab(1), tab(2, { active: true }), tab(3)], {
+        createMenu(properties) {
+          if (properties.id !== "unload-tab-strip") return;
+          const error = new Error("Error at property 'contexts': Value must be one of all, page, action.");
+          if (synchronous) throw error;
+          return error;
+        },
+      });
+      await worker.setupMenus();
+      assert.deepEqual([...worker.menus.keys()], ["unload-tab", "unload-others"]);
+      assert.deepEqual(worker.diagnostics, [["Tab Unloader action:", "unsupported-tab-context"]]);
+      worker.chrome.contextMenus.onClicked.listeners[0]({ menuItemId: "unload-tab" }, tab(1));
+      await settle();
+      await worker.chrome.commands.onCommand.listeners[0]("unload-current-tab");
+      assert.deepEqual(worker.calls.discard, [1, 2]);
+      worker.hooks.createMenu = undefined;
+      await worker.setupMenus();
+      assert.equal(worker.menus.size, 3);
+    }
+  });
+
+  await check("unrelated menu creation/removal failures are reported and do not poison rebuilding", async () => {
+    for (const synchronous of [true, false]) {
+      for (const menuId of ["unload-tab", "unload-others", "unload-tab-strip"]) {
+        const worker = workerFixture([], { createMenu(properties) {
+          if (properties.id !== menuId) return;
+          const error = new Error("PRIVATE registration failure");
+          if (synchronous) throw error;
+          return error;
+        } });
+        await worker.setupMenus();
+        assert.equal(worker.menus.size, 2);
+        assert.equal(worker.menus.has(menuId), false);
+        assert.deepEqual(worker.diagnostics, [["Tab Unloader action:", `menu-create-failed:${menuId}`]]);
+        worker.hooks.createMenu = undefined;
+        await worker.setupMenus();
+        assert.equal(worker.menus.size, 3);
+      }
+      const worker = workerFixture([], { removeMenus() {
+        const error = new Error("PRIVATE removal failure");
+        if (synchronous) throw error;
+        return error;
+      } });
+      await worker.setupMenus();
+      assert.deepEqual(worker.menuCalls, ["remove"]);
+      assert.deepEqual(worker.diagnostics, [["Tab Unloader action:", "menu-remove-failed"]]);
+      worker.hooks.removeMenus = undefined;
+      await worker.setupMenus();
+      assert.equal(worker.menus.size, 3);
+    }
+  });
+
+  await check("tab-strip clicks target only the clicked tab, regardless of highlighting", async () => {
+    for (const properties of [{}, { pinned: true }, { active: true }, { discarded: true }]) {
+      const worker = workerFixture([tab(1, { ...properties, highlighted: true }), tab(2, { highlighted: true }), tab(3, { active: true, windowId: 2 })]);
+      worker.chrome.contextMenus.onClicked.listeners[0]({ menuItemId: "unload-tab-strip" }, tab(1, { active: false }));
+      await settle();
+      assert.deepEqual(worker.calls.discard, properties.discarded ? [] : [1]);
+      assert.equal(worker.state.get(2).discarded, false);
+      assert.equal(worker.state.get(3).discarded, false);
+      assert.deepEqual(worker.calls.update, properties.active ? [2] : []);
+      if (properties.discarded) assert.equal(worker.diagnostics[0][1][0].reason, "already-unloaded");
+    }
+    for (const [tabs, target, reason] of [
+      [[tab(1, { active: true })], tab(1), "no-suitable-sibling"],
+      [[], tab(1), "tab-closed"],
+      [[], undefined, "invalid-tab-id"],
+    ]) {
+      const worker = workerFixture(tabs);
+      worker.chrome.contextMenus.onClicked.listeners[0]({ menuItemId: "unload-tab-strip" }, target);
+      await settle();
+      assert.deepEqual(worker.calls.discard, []);
+      const problem = worker.diagnostics[0][1];
+      assert.equal(typeof problem === "string" ? problem : problem[0].reason, reason);
+    }
+    const worker = workerFixture([tab(1)]);
+    worker.chrome.contextMenus.onClicked.listeners[0]({ menuItemId: "unknown-menu" }, tab(1));
+    await settle();
+    assert.deepEqual(worker.calls, { query: [], get: [], update: [], discard: [] });
   });
 
   await check("closing the popup cannot cancel the frozen worker action", async () => {
