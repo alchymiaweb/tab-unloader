@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Tab Unloader",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Felipe Andrada <felipe.andrada@gmail.com>",
   "description": "Unload tabs from memory without closing them.",
   "permissions": ["tabs", "contextMenus", "system.memory"],
