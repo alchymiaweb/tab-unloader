@@ -8,12 +8,23 @@
 
 ## ✨ Features
 
-- **Unload Current Tab:** Instantly suspend the active tab via shortcut or popup.
-- **Unload Other Tabs:** Discard all other unpinned tabs in one click.
-- **Right-Click Context Menu:** Quick unload actions directly on any page or the tab strip.
+- **Unload Current Tab:** Unload the active tab via shortcut or popup when a loaded sibling is available.
+- **Unload Other Tabs:** Discard eligible inactive, unpinned, loaded tabs across all accessible windows, regardless of popup search.
+- **Right-Click Context Menu:** Quick unload actions on pages, with an optional tab-strip entry on supporting Chrome versions.
 - **Keyboard Shortcuts:** Built-in configurable shortcuts (default: `Alt+U`).
 - **Tab Popup Search & Filter:** Filter open tabs and unload individually.
-- **Zero Tracking & Minimal Permissions:** Only requires `tabs` and `contextMenus`.
+- **Live System RAM Overview:** Total, available, and in-use physical RAM from Chrome's system memory API, refreshed every second while the popup is open. Labeled as system-wide rather than Chrome's usage; failed or invalid readings show "Unavailable."
+- **Zero Tracking & Minimal Permissions:** `tabs` for listing/unloading, `contextMenus` for menu actions, and `system.memory` for physical RAM readings. No analytics, URL history, content scripts, or background polling.
+
+### Unloading and Memory Limits
+
+Unloading may lose unsaved changes. Tabs reload when revisited. The popup reports unloaded, skipped, and failed counts, rather than treating every requested tab as a success.
+
+Explicit single-tab actions (popup, page/tab-strip menu, or `Alt+U`) may unload pinned tabs. To unload an active tab, the extension first activates an already-loaded sibling in the same window. With no suitable loaded sibling, it skips the action instead of waking an unloaded tab. Bulk unloading never unloads active or pinned tabs and rechecks each candidate before discarding.
+
+System readings use GiB (1,073,741,824 bytes). Total and available RAM come directly from `chrome.system.memory.getInfo()`; in-use RAM is total minus available, never a calculation based on the number of tabs. Readings refresh on popup open, every second while it remains open, on tab lifecycle changes, and after unload actions. Polling stops when the popup closes; no background polling runs.
+
+Chrome Stable's tab API does not expose per-tab RAM, so the extension does not estimate per-tab memory or potential savings. Rows show tab titles and loaded/unloaded state without hover tooltips, and the bulk action shows the eligible-tab count. An empty eligible set shows **"No eligible tabs."** A system RAM change is not evidence of memory saved by an individual tab. See `PLAN.md` for verification history and remaining browser checks.
 
 ---
 
@@ -57,6 +68,7 @@ Contributions are very welcome! Whether you have an idea for an unload strategy,
    - Maintain vanilla JS compatibility and clean coding conventions.
 
 3. **Test locally:**
+   - Run `node checks.cjs`, `node --check background.js`, and `node --check popup.js` for framework-free mocked checks and syntax validation.
    - Verify in `chrome://extensions` that the extension loads with no errors.
    - Inspect background service worker console (`chrome://extensions` > "Inspect views: service worker") to ensure no uncaught exceptions.
 

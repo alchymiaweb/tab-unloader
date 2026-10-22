@@ -1,18 +1,33 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8" />
+    <title>Tab Unloader</title>
     <style>
-      body { width: 360px; margin: 0; padding: 8px; font: 13px system-ui, sans-serif; }
+      /* Stable root dimensions prevent Chrome autosize feedback; the body fits the viewport. */
+      html { position: fixed; width: 360px; height: 600px; overflow: hidden; scrollbar-width: none; }
+      body { box-sizing: border-box; display: flex; flex-direction: column; width: 360px; max-height: min(600px, 100vh); margin: 0; padding: 8px; font: 13px system-ui, sans-serif; color: #202124; background: #fff; }
+      body > :not(#list) { flex-shrink: 0; }
+      h1 { margin: 0 0 6px; font-size: 13px; }
+      #memory { margin-bottom: 10px; padding: 8px; border: 1px solid #dadce0; border-radius: 4px; }
+      #memory dl { display: flex; gap: 8px; margin: 0; }
+      #memory dl div { flex: 1; }
+      #memory dt { color: #50545a; font-size: 11px; }
+      #memory dd { margin: 2px 0 0; font-variant-numeric: tabular-nums; }
+      .note { margin: 5px 0 0; color: #50545a; font-size: 11px; line-height: 1.4; }
+      .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
       #filter { box-sizing: border-box; width: 100%; padding: 6px; margin-bottom: 6px; }
-      #list { max-height: 420px; overflow-y: auto; }
+      #list { min-height: 0; max-height: 290px; overflow-y: auto; }
       .tab { display: flex; align-items: center; gap: 6px; padding: 4px 2px; }
-      .tab.discarded .title { opacity: 0.45; }
+      .tab.discarded .title { color: #63676d; }
       .tab img { width: 16px; height: 16px; flex: none; }
       .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .tab button { flex: none; cursor: pointer; }
       .tab button:disabled { cursor: default; }
+      :focus-visible { outline: 2px solid #185abc; outline-offset: 2px; }
       #others { display: block; width: 100%; margin-top: 6px; padding: 6px; cursor: pointer; }
+      #others:disabled { cursor: default; }
+      #status { margin: 6px 0; min-height: 1.4em; line-height: 1.4; }
       #donate {
         display: block; margin-top: 8px; padding: 8px; text-align: center;
         background: #ffdd00; color: #000; font-weight: 600; text-decoration: none;
@@ -22,9 +37,22 @@
     </style>
   </head>
   <body>
+    <section id="memory" aria-labelledby="memory-heading">
+      <h1 id="memory-heading">System RAM</h1>
+      <dl>
+        <div><dt>Total</dt><dd id="memory-total">Loading...</dd></div>
+        <div><dt>Available</dt><dd id="memory-available">Loading...</dd></div>
+        <div><dt>In use</dt><dd id="memory-used">Loading...</dd></div>
+      </dl>
+      <p class="note">System-wide, not Chrome's RAM usage.</p>
+    </section>
+    <label for="filter" class="sr-only">Search tabs by title or URL</label>
     <input id="filter" placeholder="Filter tabs…" autofocus />
-    <div id="list"></div>
-    <button id="others">Unload all other tabs</button>
+    <div id="list" role="list" aria-label="Open tabs">Loading tabs...</div>
+    <button id="others" aria-describedby="bulk-info warning" disabled>Unload all other tabs</button>
+    <p id="bulk-info" class="note">All accessible windows, regardless of search.</p>
+    <p id="warning" class="note">Unloading may lose unsaved changes. Tabs reload when revisited.</p>
+    <p id="status" role="status" aria-live="polite" aria-atomic="true"></p>
     <a id="donate" href="https://www.paypal.com/donate?business=felipe.andrada%40gmail.com&currency_code=USD&item_name=Tab+Unloader+-+AI+credit" target="_blank" rel="noopener">⚡ Buy me an AI credit</a>
     <script src="popup.js"></script>
   </body>
