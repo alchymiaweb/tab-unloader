@@ -25,9 +25,6 @@
       .tab button { flex: none; cursor: pointer; }
       .tab button:disabled { cursor: default; }
       :focus-visible { outline: 2px solid #185abc; outline-offset: 2px; }
-      #tab-tooltip { position: fixed; left: 8px; right: 8px; z-index: 1; box-sizing: border-box; max-height: calc(100vh - 16px); overflow-y: auto; padding: 8px; border: 1px solid #74787d; border-radius: 4px; background: #fff; box-shadow: 0 3px 10px #0003; line-height: 1.4; overflow-wrap: anywhere; }
-      #tab-tooltip div + div { margin-top: 4px; }
-      #tab-tooltip div:first-child { font-weight: 600; }
       #others { display: block; width: 100%; margin-top: 6px; padding: 6px; cursor: pointer; }
       #others:disabled { cursor: default; }
       #status { margin: 6px 0; min-height: 1.4em; line-height: 1.4; }
@@ -56,7 +53,6 @@
     <p id="bulk-info" class="note">All accessible windows, regardless of search.</p>
     <p id="warning" class="note">Unloading may lose unsaved changes. Tabs reload when revisited.</p>
     <p id="status" role="status" aria-live="polite" aria-atomic="true"></p>
-    <div id="tab-tooltip" role="tooltip" hidden></div>
     <a id="donate" href="https://www.paypal.com/donate?business=felipe.andrada%40gmail.com&currency_code=USD&item_name=Tab+Unloader+-+AI+credit" target="_blank" rel="noopener">⚡ Buy me an AI credit</a>
     <script src="popup.js"></script>
   </body>

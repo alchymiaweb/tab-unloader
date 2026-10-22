@@ -85,7 +85,6 @@ class Element {
     this.className = "";
     this.value = "";
     this.text = "";
-    this.hidden = false;
   }
   set innerHTML(_value) { throw new Error("Untrusted content must not use innerHTML"); }
   set textContent(value) { this.text = String(value); this.children = []; }
@@ -95,32 +94,25 @@ class Element {
   addEventListener(name, listener) { (this.listeners[name] ||= []).push(listener); }
   emit(name, details = {}) { return Promise.all((this.listeners[name] || []).map((listener) => listener(details))); }
   setAttribute(name, value) { this.attributes[name] = String(value); }
-  contains(node) { return node === this || this.children.some((child) => child.contains(node)); }
-  matches(selector) { return selector === ":hover" ? Boolean(this.hovered) : this.className.split(" ").includes(selector.slice(1)); }
+  matches(selector) { return this.className.split(" ").includes(selector.slice(1)); }
   closest(selector) { return this.matches(selector) ? this : this.parentElement?.closest(selector); }
   querySelectorAll(selector) {
     assert.equal(selector, "button");
     return this.children.flatMap((child) => [...(child.tagName === "BUTTON" ? [child] : []), ...child.querySelectorAll(selector)]);
   }
   querySelector(selector) { return this.querySelectorAll(selector)[0]; }
-  getBoundingClientRect() { return this.bounds || { top: 50, bottom: 75, height: 90 }; }
-  focus() {
-    this.document.activeElement = this;
-    for (let node = this; node; node = node.parentElement) void node.emit("focusin", { target: this });
-  }
+  focus() { this.document.activeElement = this; }
 }
 
 function popupFixture(worker = workerFixture([tab(1, { active: true }), tab(2)]), options = {}) {
   const elements = {};
-  const document = { activeElement: null, listeners: {}, addEventListener: Element.prototype.addEventListener };
+  const document = { activeElement: null };
   document.createElement = (tagName) => new Element(tagName, document);
   document.getElementById = (id) => {
     assert.ok(popupIds.has(id), `Missing popup element: ${id}`);
     return elements[id] ||= document.createElement(id === "others" ? "button" : "div");
   };
   document.activeElement = document.createElement("body");
-  elements["tab-tooltip"] = document.createElement("div");
-  elements["tab-tooltip"].hidden = true;
   const calls = { memory: 0, messages: 0 };
   const intervals = new Map();
   const window = { innerHeight: 600, listeners: {}, addEventListener: Element.prototype.addEventListener };
@@ -299,7 +291,8 @@ async function main() {
     const timer = [...popup.intervals.values()][0];
     assert.equal(timer.delay, 1000);
     const row = popup.elements.list.children[1];
-    row.focus();
+    const button = row.querySelector("button");
+    button.focus();
     const queries = popup.worker.calls.query.length;
     const bulkText = popup.elements["bulk-info"].textContent;
     reading = { capacity: 16 * 1024 ** 3, availableCapacity: 3 * 1024 ** 3 };
@@ -310,8 +303,7 @@ async function main() {
     assert.equal(popup.elements["memory-used"].textContent, "13 GiB");
     assert.equal(popup.worker.calls.query.length, queries);
     assert.equal(popup.elements.list.children[1], row);
-    assert.equal(popup.document.activeElement, row);
-    assert.equal(popup.elements["tab-tooltip"].hidden, false);
+    assert.equal(popup.document.activeElement, button);
     assert.equal(popup.elements["bulk-info"].textContent, bulkText);
     popup.worker.state.set(3, tab(3));
     await popup.worker.chrome.tabs.onCreated.listeners[0]();
@@ -365,40 +357,37 @@ async function main() {
     assert.equal(popup.elements.status.textContent, "Unloaded: 2; Skipped: 0; Failed: 0.");
   });
 
-  await check("tooltips expose full text on focus/hover and dismiss with Escape", async () => {
+  await check("rows have no tooltips or extra tab stops and keep accessible unload controls", async () => {
     const popup = popupFixture();
     await settle();
     const row = popup.elements.list.children[1];
-    row.bounds = { top: 560, bottom: 585, height: 25 };
-    row.focus();
-    assert.equal(popup.elements["tab-tooltip"].hidden, false);
-    assert.ok(popup.elements["tab-tooltip"].textContent.includes("https://example.com/2"));
-    assert.deepEqual(popup.elements["tab-tooltip"].children.map((line) => line.textContent), ["Tab 2", "https://example.com/2", "Loaded"]);
-    await popup.context.showTooltip(row, tab(2, { discarded: true }));
-    assert.equal(popup.elements["tab-tooltip"].children[2].textContent, "Unloaded");
-    assert.ok(Number.parseFloat(popup.elements["tab-tooltip"].style.top) >= 8);
-    assert.ok(Number.parseFloat(popup.elements["tab-tooltip"].style.top) + 90 <= 592);
-    popup.document.listeners.keydown[0]({ key: "Escape" });
-    assert.equal(popup.elements["tab-tooltip"].hidden, true);
+    const button = row.querySelector("button");
+    assert.equal(popupIds.has("tab-tooltip"), false);
+    assert.equal(row.tabIndex, undefined);
+    assert.equal(row.attributes["aria-describedby"], undefined);
+    assert.deepEqual(Object.keys(row.listeners), []);
+    assert.equal(button.attributes["aria-label"], "Unload: Tab 2");
+    assert.equal(button.attributes["aria-describedby"], "warning");
+    button.focus();
     await row.emit("mouseenter");
-    assert.equal(popup.elements["tab-tooltip"].hidden, false);
-    popup.document.activeElement = popup.elements.filter;
-    await row.emit("mouseleave", { relatedTarget: popup.elements["tab-tooltip"] });
-    assert.equal(popup.elements["tab-tooltip"].hidden, false);
-    await popup.elements["tab-tooltip"].emit("mouseleave");
-    assert.equal(popup.elements["tab-tooltip"].hidden, true);
+    assert.equal(popup.document.activeElement, button);
   });
 
-  await check("tooltips meet the row edge without a pointer gap in either direction", async () => {
+  await check("tab refresh restores button focus or returns it to search when unavailable", async () => {
     const popup = popupFixture();
     await settle();
-    const row = popup.elements.list.children[1];
-    const tooltip = popup.elements["tab-tooltip"];
-    for (const [top, bottom, expectedTop] of [[50, 75, 75], [560, 585, 470]]) {
-      row.bounds = { top, bottom, height: 25 };
-      await row.emit("mouseenter");
-      assert.equal(Number.parseFloat(tooltip.style.top), expectedTop);
-    }
+    const button = popup.elements.list.children[1].querySelector("button");
+    button.focus();
+    popup.worker.state.get(2).title = "Updated tab";
+    await popup.worker.chrome.tabs.onUpdated.listeners[0]();
+    const replacement = popup.elements.list.children[1].querySelector("button");
+    assert.notEqual(replacement, button);
+    assert.equal(popup.document.activeElement, replacement);
+    assert.equal(replacement.attributes["aria-label"], "Unload: Updated tab");
+    popup.worker.state.get(2).discarded = true;
+    await popup.worker.chrome.tabs.onUpdated.listeners[0]();
+    assert.equal(popup.elements.list.children[1].querySelector("button").disabled, true);
+    assert.equal(popup.document.activeElement, popup.elements.filter);
   });
 
   await check("pending requests disable controls, reject duplicates, and restore after failure", async () => {

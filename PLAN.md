@@ -1,6 +1,6 @@
 # Tab Unloader improvement plan
 
-Status: feature **01** scope revised on 2026-10-22: remove all per-tab/potential-savings estimates and refresh actual system RAM every second while the popup is open. The estimate/calibration requirements in historical verification notes are superseded by this request. All 18 Node checks pass; current browser verification is recorded below. Feature **02** is untouched. Commit and push are authorized for this update.
+Status: feature **01** scope revised on 2026-10-22: remove per-tab/potential-savings estimates and row tooltips; refresh actual system RAM every second while the popup is open. Earlier estimate/calibration and tooltip requirements in historical verification notes are superseded. All 18 Node checks and the latest Chrome smoke check pass. Feature **02** is untouched.
 
 ## Confirmed scope
 
@@ -52,7 +52,7 @@ Checked against the official documentation on 2026-10-21; actual browser behavio
 5. RAM released cannot be reliably attributed to a tab from a system before/after difference: other applications, shared renderer processes, and retained caches affect the result. Do not claim exact or cumulative “RAM saved,” or infer time saved from MB.
 6. [`chrome.i18n.getMessage()`](https://developer.chrome.com/docs/extensions/reference/api/i18n#method-getMessage) takes a message name, substitutions, and options, not a chosen locale. Feature 06 therefore needs a shared bundled-catalog resolver for its explicit language override; browser-owned metadata remains browser-localized.
 
-## 01 — Live RAM overview and row tooltips
+## 01 — Live RAM overview
 
 **Goal:** monitor actual system memory pressure without inventing per-tab measurements or savings.
 
@@ -60,16 +60,16 @@ Checked against the official documentation on 2026-10-21; actual browser behavio
 - [x] Add `system.memory` permission and read total/available RAM when the popup opens, every second while open, and after an unload action. Keep this read independent of unloading success. Stop polling on popup close. No background polling or waking unloaded tabs to inspect them.
 - [x] Show a compact system-memory summary above the search/list: total, available, and total-minus-available, explicitly labeled as system RAM. Accept only finite numbers with `capacity > 0` and `0 <= availableCapacity <= capacity`; invalid data is unavailable, not clamped into a plausible reading. Use binary GiB and locale-aware formatting with at most one decimal place. Never derive RAM readings from tab counts.
 - [x] Remove the estimate model, estimate formatter, and all estimate/savings messages. No calibration or numeric estimates are planned under the revised scope.
-- [x] On row hover **and keyboard focus**, expose full title, URL, and loaded/unloaded state. Keep the tooltip noninteractive, dismissible with Escape, and within the popup bounds. Preserve the existing mouse and keyboard behavior without RAM estimates.
+- [x] Remove row tooltips and their styles/listeners. Keep unload buttons keyboard-accessible with full tab titles in their accessible names and the existing unsaved-changes warning. Remove noninteractive row tab stops; preserve button focus during refresh and return focus to search if the button becomes unavailable.
 - [x] Under “Unload all other tabs,” show only the eligible-tab count. Exclude pinned, active, already-unloaded, and invoking tabs. Disable the bulk action when the eligible count is zero and display “No eligible tabs.”
 - [x] Show unloaded tabs as “Unloaded,” not a measured “0 MB.” Failed or unsupported memory reads show “Unavailable,” never a fabricated zero.
-- [x] After unloading, report unloaded/skipped/failed counts. Refresh the list, eligibility, and system reading; while the popup is open, also refresh on tab lifecycle changes and ignore stale asynchronous render results. Periodic memory reads do not rerender the list or disturb focus/tooltips.
+- [x] After unloading, report unloaded/skipped/failed counts. Refresh the list, eligibility, and system reading; while the popup is open, also refresh on tab lifecycle changes and ignore stale asynchronous render results. Periodic memory reads do not rerender the list or disturb focus.
 
-**Current checkpoint:** all 18 framework-free Node checks and three current headless Chrome scenarios pass. Node coverage includes one-second polling, cleanup, unchanged tab counts during changing RAM readings, unchanged RAM readings during changing tab counts, API failure/invalid-data recovery, and stale-response protection. The current browser run covers the extension page, not native action-popup interaction; older full-popup checks remain historical evidence.
+**Current checkpoint:** all 18 framework-free Node checks and the latest headless Chrome smoke check pass. Coverage includes polling, cleanup, invalid-data recovery, stale-response protection, tooltip removal, accessible unload controls, and focus restoration. Current browser checks cover the extension page, not native action-popup interaction; older full-popup checks remain historical evidence.
 
 **Files:** `manifest.json`, `popup.html`, `popup.js`, `background.js`, `README.md`, `checks.cjs`.
 
-**Done when:** fixed RAM fixtures format correctly; unavailable/invalid data recovers on subsequent polls; actual system readings update without tab events; eligibility agrees with the actual bulk action; unloading failures do not appear as successes. Verify tooltips by mouse and keyboard in real Chrome.
+**Done when:** fixed RAM fixtures format correctly; unavailable/invalid data recovers on subsequent polls; actual system readings update without tab events; eligibility agrees with the actual bulk action; unloading failures do not appear as successes. Verify tooltip-free rows and keyboard navigation in real Chrome.
 
 ## 02 — Unload from the tab-strip right-click menu
 
@@ -135,7 +135,7 @@ Checked against the official documentation on 2026-10-21; actual browser behavio
 - [ ] Add Chrome locale catalogs for `en`, `pt_BR`, `es`, and `zh_CN`, with English fallback and `default_locale` in the manifest.
 - [ ] Inside Settings only, offer Browser default, English, Português (Brasil), Español, and 简体中文. Save the override in the existing preference storage.
 - [ ] Use native `chrome.i18n` for browser-selected manifest strings. Use one small `i18n.js` resolver over the same bundled catalogs for popup/menu strings, including browser-default mode; load it before `popup.js` and through `importScripts` in the classic worker. Store `language` as `browser`/`en`/`pt_BR`/`es`/`zh_CN`. For browser default, normalize hyphens/underscores, try the exact UI locale, then its base-language catalog, then English. Missing keys fall back to English; missing English keys fail the check. No i18n dependency or duplicated catalogs.
-- [ ] Translate search labels, both sorting modes, RAM caveats, tooltips, accessible names, actions, results/errors, warnings, settings, context menus, shortcut description, and donation text. Rebuild menu labels after a language change and restore the preference when the worker restarts.
+- [ ] Translate search labels, both sorting modes, RAM caveats, accessible names, actions, results/errors, warnings, settings, context menus, shortcut description, and donation text. Rebuild menu labels after a language change and restore the preference when the worker restarts.
 - [ ] Set the document's BCP 47 language, format numbers/units with `Intl`, re-sort with the effective locale, and use catalog placeholders for complete count/status messages rather than English-only concatenation. Prefer neutral count labels over introducing a pluralization engine. Manifest metadata and Chrome's own UI continue to follow the browser locale, not our manual override.
 - [ ] Preserve literal tab titles and URLs; test long Portuguese/Spanish strings and Chinese text without clipping action controls.
 
@@ -155,10 +155,15 @@ Checked against the official documentation on 2026-10-21; actual browser behavio
 - [ ] All six feature sections meet their done-when criteria. Feature 01 follows the revised measured-only scope with live polling and no estimates.
 - [ ] The runnable check covers live memory polling, invalid memory readings/recovery, malicious/missing titles/URLs, deterministic grouping, duplicate/invalid IDs, mixed discard results, and tabs changing active/pinned/closed state during an action.
 - [ ] Real Chrome checks cover multiple windows, active/pinned/only-tab cases, search/selection transitions, tab-strip/page/action menus, `Alt+U`, popup closure mid-action, and menu/preferences behavior after a worker restart.
-- [ ] Keyboard-only navigation, tooltip dismissal, checkbox explanations, focus restoration, accessible result announcements, empty/error/pending states, and scrolling work at the compact popup size. Test all four languages in both light and dark themes, System theme changes, browser-default fallback, and corrupt/missing preferences.
+- [ ] Keyboard-only navigation, checkbox explanations, focus restoration, accessible result announcements, empty/error/pending states, and scrolling work at the compact popup size. Test all four languages in both light and dark themes, System theme changes, browser-default fallback, and corrupt/missing preferences.
 - [ ] README and final store screenshots describe only verified behavior and the final permissions (`tabs`, `contextMenus`, `system.memory`, `storage`); all memory figures/caveats remain truthful. No new analytics, website permissions, remote code, or dependency/build tooling appears.
 
 ## Verification log
+
+### 2026-10-22 tooltip removal
+
+- `node checks.cjs`: 18/18 pass; tooltip-specific checks are replaced with accessible-control and focus-restoration regressions. JavaScript syntax and `git diff --check` pass.
+- Chrome for Testing 153.0.8010.12 / Ubuntu 24.04.4 LTS, isolated headless extension page: no tooltip appears on hover; Tab reaches unload buttons without row-only stops; button focus survives tab refresh; all accessible description IDs resolve; actual system RAM continues refreshing; no uncaught page errors. Native action-popup interaction is not rerun.
 
 ### 2026-10-22 scope revision: no estimates, live system RAM
 
