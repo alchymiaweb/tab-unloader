@@ -81,31 +81,39 @@ function reportActionProblems(response) {
   }
 }
 
-// removeAll first so a reload never hits a duplicate-id error that silently skips creation.
+let menuSetup = Promise.resolve();
+
 function setupMenus() {
-  chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({
-      id: "unload-tab",
-      title: "Unload this tab (keep open)",
-      contexts: ["all"],
+  menuSetup = menuSetup.then(async () => {
+    await new Promise((resolve, reject) => {
+      chrome.contextMenus.removeAll(() => {
+        const error = chrome.runtime.lastError;
+        if (error) reject(error);
+        else resolve();
+      });
     });
-    chrome.contextMenus.create({
-      id: "unload-others",
-      title: "Unload all other tabs",
-      contexts: ["all"],
-    });
-    // Experimental: the "tab" context targets the tab-strip right-click menu. Chrome versions
-    // that don't support it reject the enum value, so create it separately and ignore failure.
-    // Unsupported Chrome versions throw synchronously on the enum value, hence the try/catch.
-    try {
-      chrome.contextMenus.create(
-        { id: "unload-tab-strip", title: "Unload tab", contexts: ["tab"] },
-        () => void chrome.runtime.lastError
-      );
-    } catch {
-      console.info("Tab-strip context menu not supported in this Chrome version.");
+    for (const properties of [
+      { id: "unload-tab", title: "Unload this tab (keep open)", contexts: ["all"] },
+      { id: "unload-others", title: "Unload all other tabs", contexts: ["all"] },
+      { id: "unload-tab-strip", title: "Unload tab", contexts: ["tab"] },
+    ]) {
+      await new Promise((resolve, reject) => {
+        chrome.contextMenus.create(properties, () => {
+          const error = chrome.runtime.lastError;
+          if (error) reject(error);
+          else resolve();
+        });
+      }).catch((error) => {
+        const message = error?.message || "";
+        const unsupported = properties.id === "unload-tab-strip"
+          && /\bcontexts\b/i.test(message) && /must be one of|invalid value|unsupported|not supported/i.test(message);
+        reportActionProblems({ ok: false, error: unsupported ? "unsupported-tab-context" : `menu-create-failed:${properties.id}` });
+      });
     }
+  }).catch(() => {
+    reportActionProblems({ ok: false, error: "menu-remove-failed" });
   });
+  return menuSetup;
 }
 
 chrome.runtime.onInstalled.addListener(setupMenus);
@@ -114,7 +122,9 @@ chrome.runtime.onStartup.addListener(setupMenus);
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   const type = info.menuItemId === "unload-tab-strip" ? "unload-tab" : info.menuItemId;
   if (type === "unload-tab" || type === "unload-others") {
-    void handleUnloadRequest({ type, tabId: tab?.id }).then(reportActionProblems);
+    void handleUnloadRequest({ type, tabId: tab?.id }).then(reportActionProblems).catch(() => {
+      reportActionProblems({ ok: false, error: "request-failed" });
+    });
   }
 });
 

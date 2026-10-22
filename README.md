@@ -10,7 +10,7 @@
 
 - **Unload Current Tab:** Unload the active tab via shortcut or popup when a loaded sibling is available.
 - **Unload Other Tabs:** Discard eligible inactive, unpinned, loaded tabs across all accessible windows, regardless of popup search.
-- **Right-Click Context Menu:** Quick unload actions on pages, with an optional tab-strip entry on supporting Chrome versions.
+- **Right-Click Context Menu:** Quick unload actions on pages and the extension icon, plus an optional tab-strip entry on supporting Chrome versions.
 - **Keyboard Shortcuts:** Built-in configurable shortcuts (default: `Alt+U`).
 - **Tab Popup Search & Filter:** Filter open tabs and unload individually.
 - **Live System RAM Overview:** Total, available, and in-use physical RAM from Chrome's system memory API, refreshed every second while the popup is open. Labeled as system-wide rather than Chrome's usage; failed or invalid readings show "Unavailable."
@@ -25,6 +25,14 @@ Explicit single-tab actions (popup, page/tab-strip menu, or `Alt+U`) may unload 
 System readings use GiB (1,073,741,824 bytes). Total and available RAM come directly from `chrome.system.memory.getInfo()`; in-use RAM is total minus available, never a calculation based on the number of tabs. Readings refresh on popup open, every second while it remains open, on tab lifecycle changes, and after unload actions. Polling stops when the popup closes; no background polling runs.
 
 Chrome Stable's tab API does not expose per-tab RAM, so the extension does not estimate per-tab memory or potential savings. Rows show tab titles and loaded/unloaded state without hover tooltips, and the bulk action shows the eligible-tab count. An empty eligible set shows **"No eligible tabs."** A system RAM change is not evidence of memory saved by an individual tab. See `PLAN.md` for verification history and remaining browser checks.
+
+### Tab-Strip Menu Support
+
+Right-click a browser tab and choose **"Unload tab"** without opening the popup. This targets only the right-clicked tab, even when it is inactive or multiple tabs are highlighted. Already-unloaded or closed targets are skipped; active targets follow the loaded-sibling policy described above.
+
+Chrome introduced extension tab-strip menus in **Chrome 150**. Native tab-strip, page, extension-icon, and `Alt+U` actions are verified with **Chrome for Testing 156.0.8078.47 (Stable channel)** on Ubuntu 24.04.4 LTS / WSL2 using Xvfb. Other versions and platforms are not verified. On browsers without tab-strip menu support, use the popup, page or extension-icon menus, or the shortcut; this optional entry does not raise the extension's minimum Chrome version.
+
+Menu rebuilding is serialized across lifecycle events to avoid duplicate entries. Unsupported tab contexts and unrelated registration failures produce distinct, bounded worker diagnostics without logging tab titles or URLs. Local unpacked installations must keep Developer mode enabled when reloading the extension.
 
 ---
 
