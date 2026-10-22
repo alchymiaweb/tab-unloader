@@ -1,10 +1,10 @@
 # Tab Unloader improvement plan
 
-Status: feature **01** measured-only checkpoint on `feat/01-ram-overview`, retested on 2026-10-22. **R1 and R2 are resolved:** 16 Node checks and 13 real-Chrome scenarios at each of two screen sizes pass. Commit and push are authorized by the current user request. Estimate calibration/numeric savings remain open, so full feature 01 is not complete. Feature **02** is untouched; accept the measured-only checkpoint before starting it.
+Status: feature **01** scope revised on 2026-10-22: remove all per-tab/potential-savings estimates and refresh actual system RAM every second while the popup is open. The estimate/calibration requirements in historical verification notes are superseded by this request. All 18 Node checks pass; current browser verification is recorded below. Feature **02** is untouched. Commit and push are authorized for this update.
 
 ## Confirmed scope
 
-- Show system RAM, approximate per-tab RAM, and potential savings from unloading eligible tabs. Estimates must be visibly labeled, never presented as measurements.
+- Show actual system RAM, refreshed every second while the popup is open. Do not estimate per-tab RAM or potential savings; keep eligible-tab counts and loaded/unloaded state.
 - Offer unloading from the browser tab's right-click menu, without opening the popup, where supported.
 - Add two list modes: alphabetical by title and grouped by website hostname.
 - Replace each row's text unload button with an accessible icon; add checkboxes and an “Unload selected tabs” bulk action.
@@ -26,7 +26,7 @@ The extension currently has a compact 360px popup, search, individual unloading,
 ## Fixed decisions and build order
 
 - Target desktop Chrome Stable, Manifest V3. Other Chromium browsers are best-effort; a Firefox/mobile port is out of scope. Record the exact browser version and OS during browser checks, rather than claiming untested compatibility.
-- Execute **01 → 02 → 03 → 04 → 05 → 06**. Feature 01 starts with the action-result contract below, then the measured RAM overview, then calibrated estimates if evidence permits. Do not implement later features as prerequisites.
+- Execute **01 → 02 → 03 → 04 → 05 → 06**. Feature 01 starts with the action-result contract below, then the live measured RAM overview. Do not implement later features as prerequisites.
 - Default preferences are Title A–Z, System appearance, and Browser default language. Keep the existing compact popup and scrollable list; no dashboard, onboarding, options page, or build system.
 - “Unload all other tabs” covers all accessible windows regardless of search. Show that scope beside the action. “Unload selected tabs” targets only selected IDs. Search never silently changes the all-other action's scope.
 - Keep the current files. Add only one framework-free `checks.cjs` for runnable checks, bundled locale catalogs/shared translation resolver in 06, and a stylesheet if extracting the inline CSS becomes simpler. No new architecture layer.
@@ -35,7 +35,7 @@ The extension currently has a compact 360px popup, search, individual unloading,
 
 - Keep `{ type: "unload-tab", tabId }` and `{ type: "unload-others", tabId }`; add `{ type: "unload-selected", tabIds }` only in 04. Reject unknown types, missing/invalid IDs, and malformed selections without side effects. IDs must be nonnegative safe integers; deduplicate selection IDs.
 - Return `{ ok: true, results: [{ tabId, status, reason? }] }` for handled requests. Each status is `unloaded`, `skipped`, or `failed`; `ok` means the request was handled, not that every tab unloaded. Return `{ ok: false, error }` for invalid requests or a request-level API failure. Use stable reason/error codes that the UI can translate later.
-- Bulk eligibility is a fresh, valid tab ID with `!active && !pinned && !discarded`; all-other also excludes its invoking `tabId`. Use the same policy for checkbox state, counts, potential estimates, and execution. Freeze the worker's candidate IDs once per request, re-read each immediately before discarding, and never expand a selected request beyond its supplied IDs.
+- Bulk eligibility is a fresh, valid tab ID with `!active && !pinned && !discarded`; all-other also excludes its invoking `tabId`. Use the same policy for checkbox state, counts, and execution. Freeze the worker's candidate IDs once per request, re-read each immediately before discarding, and never expand a selected request beyond its supplied IDs.
 - A single-tab action may unload pinned tabs. For an active target, choose an already-loaded sibling in the same window before discarding; if none exists, return `skipped` with `no-suitable-sibling`. Do not wake an unloaded sibling merely to unload the current tab. Revalidate the target after switching.
 - Collect per-tab outcomes independently; one closed tab or rejected discard must not abort the others. Already-unloaded/closed/protected tabs are skips, not successes. Confirm the discard result reports `discarded`; an undefined result is not automatically success. Derive displayed counts only from the results, not from the requested count.
 - Catch API rejections in message, menu, and shortcut entry points. Keep the existing asynchronous `sendResponse`/`return true` pattern and respond once on every handled path. Register worker listeners synchronously; future preference loading happens inside handlers. Do not add automatic retries or a persistent job queue.
@@ -48,31 +48,28 @@ Checked against the official documentation on 2026-10-21; actual browser behavio
 1. [`chrome.system.memory.getInfo()`](https://developer.chrome.com/docs/extensions/reference/api/system/memory) exposes total and available physical RAM with the `system.memory` permission. Total minus available is a **system-wide** usage indicator, not Chrome's RAM usage.
 2. [`chrome.tabs.Tab`](https://developer.chrome.com/docs/extensions/reference/api/tabs#type-Tab) does not expose per-tab RAM. [`chrome.processes`](https://developer.chrome.com/docs/extensions/reference/api/processes) is documented as Dev-channel-only; do not depend on it for a Stable release. JavaScript heap size alone would not represent full tab RAM either.
 3. The current [`contextMenus.ContextType`](https://developer.chrome.com/docs/extensions/reference/api/contextMenus#type-ContextType) documents `"tab"`; `"all"` explicitly excludes it. The Chrome Extensions team's [May 15, 2026 announcement](https://groups.google.com/a/chromium.org/g/chromium-extensions/c/RReE8dtY4Ok) identifies **Chrome 150** as its introduction and confirms that the event targets the right-clicked tab, not every highlighted tab. The existing worker already attempts a separate tab-strip menu; harden it rather than duplicating it. Keep fallbacks on older versions; do not raise the whole extension's minimum version solely for this optional menu.
-4. Our RAM tooltip can appear on popup rows. There is no documented extension API for replacing Chrome's native tab-hover card or reading its RAM value.
+4. Our tab-details tooltip can appear on popup rows. There is no documented extension API for replacing Chrome's native tab-hover card or reading its RAM value.
 5. RAM released cannot be reliably attributed to a tab from a system before/after difference: other applications, shared renderer processes, and retained caches affect the result. Do not claim exact or cumulative “RAM saved,” or infer time saved from MB.
 6. [`chrome.i18n.getMessage()`](https://developer.chrome.com/docs/extensions/reference/api/i18n#method-getMessage) takes a message name, substitutions, and options, not a chosen locale. Feature 06 therefore needs a shared bundled-catalog resolver for its explicit language override; browser-owned metadata remains browser-localized.
 
-## 01 — RAM overview, row tooltips, and potential savings
+## 01 — Live RAM overview and row tooltips
 
-**Goal:** understand memory pressure and the approximate benefit before unloading.
+**Goal:** monitor actual system memory pressure without inventing per-tab measurements or savings.
 
 - [x] Implement the shared action contract before adding RAM-dependent result displays. Cover malformed messages, mixed outcomes, and active/pinned protection in `node checks.cjs`.
-- [x] Add `system.memory` permission and read total/available RAM when the popup opens and after an unload action. Keep this read independent of unloading success. No background polling or waking unloaded tabs to inspect them. Update the README's permission list when the permission is added.
-- [x] Show a compact system-memory summary above the search/list: total, available, and total-minus-available, explicitly labeled as system RAM. Accept only finite numbers with `capacity > 0` and `0 <= availableCapacity <= capacity`; invalid data is unavailable, not clamped into a plausible reading. Use GiB for system RAM and MiB for tab estimates, binary divisors, and locale-aware formatting with at most one decimal place. System fixtures verified; numeric tab estimates remain gated.
-- [ ] Establish a documented, coarse estimate model before shipping any per-tab figures. Record Chrome Task Manager observations of repeatable representative page states, including date, browser/OS, memory column, sample count, range, and shared-process limitations. Do not count one shared renderer as several independent tab samples; if attribution cannot support a per-tab baseline, keep the gate closed. Do not invent site-specific values from URLs or add measurement permissions.
-- [ ] Use one documented per-loaded-tab range consistently, labeled “Estimated,” with a caveat that it is modeled rather than read from Chrome. Potential savings are eligible-count times that range, not a ranking of individual tabs, a confidence interval, or a guarantee. Keep model values unset until calibration exists.
-- [x] On row hover **and keyboard focus**, expose full title, URL, loaded/unloaded state, and RAM limitations. Keep the tooltip noninteractive, dismissible with Escape, and within the popup bounds. Real Chrome verifies keyboard focus, Escape, safe text, bounds, and pointer persistence after the R1 fix. Numeric RAM remains gated; loaded rows explicitly show "Estimate unavailable".
-- [ ] Under “Unload all other tabs,” show eligible-tab count and estimated potential savings from exactly that eligible set. Exclude pinned, active, already-unloaded, and invoking tabs. Disable the bulk action when the eligible count is zero; display “No eligible tabs,” not an unavailable estimate or a measured zero saving.
+- [x] Add `system.memory` permission and read total/available RAM when the popup opens, every second while open, and after an unload action. Keep this read independent of unloading success. Stop polling on popup close. No background polling or waking unloaded tabs to inspect them.
+- [x] Show a compact system-memory summary above the search/list: total, available, and total-minus-available, explicitly labeled as system RAM. Accept only finite numbers with `capacity > 0` and `0 <= availableCapacity <= capacity`; invalid data is unavailable, not clamped into a plausible reading. Use binary GiB and locale-aware formatting with at most one decimal place. Never derive RAM readings from tab counts.
+- [x] Remove the estimate model, estimate formatter, and all estimate/savings messages. No calibration or numeric estimates are planned under the revised scope.
+- [x] On row hover **and keyboard focus**, expose full title, URL, and loaded/unloaded state. Keep the tooltip noninteractive, dismissible with Escape, and within the popup bounds. Preserve the existing mouse and keyboard behavior without RAM estimates.
+- [x] Under “Unload all other tabs,” show only the eligible-tab count. Exclude pinned, active, already-unloaded, and invoking tabs. Disable the bulk action when the eligible count is zero and display “No eligible tabs.”
 - [x] Show unloaded tabs as “Unloaded,” not a measured “0 MB.” Failed or unsupported memory reads show “Unavailable,” never a fabricated zero.
-- [x] After unloading, report unloaded/skipped/failed counts. Any potential figure based on successful unloads remains modeled, not proof of reclaimed physical RAM. Refresh the list, eligibility, and system reading; while the popup is open, also refresh on tab lifecycle changes and ignore stale asynchronous render results.
+- [x] After unloading, report unloaded/skipped/failed counts. Refresh the list, eligibility, and system reading; while the popup is open, also refresh on tab lifecycle changes and ignore stale asynchronous render results. Periodic memory reads do not rerender the list or disturb focus/tooltips.
 
-**Measured-only checkpoint:** eligible counts, all-window/search-independent scope, zero-eligible disabling, real system RAM, unload results, pointer/keyboard tooltips, and constrained-height layout are verified in unpacked Chrome for Testing 156.0.8078.47 on Ubuntu 26.04.1 LTS x86_64 (headless). The 2026-10-22 retest passed 13/13 scenarios on both 800x600 and 1280x900 virtual screens, plus 16 Node checks. R1 and R2 are resolved. Loaded rows and potential savings show "Estimate unavailable"; `tabMemoryRangeBytes` stays `null`. Calibration, numeric estimates, and the numeric-savings checkbox remain open. Evidence is logged below; this is not full feature-completion or release approval.
+**Current checkpoint:** all 18 framework-free Node checks and three current headless Chrome scenarios pass. Node coverage includes one-second polling, cleanup, unchanged tab counts during changing RAM readings, unchanged RAM readings during changing tab counts, API failure/invalid-data recovery, and stale-response protection. The current browser run covers the extension page, not native action-popup interaction; older full-popup checks remain historical evidence.
 
-**Estimate gate:** if there is no defensible calibration, finish the measured system overview and show “Estimate unavailable” for loaded tabs/potential savings; leave those implementation checkboxes pending. Record a measured-only checkpoint for review, not “01 complete.” Later features can proceed after that checkpoint is accepted, but the requested estimate scope remains open. Shared processes mean even calibrated totals remain rough potential, not guaranteed savings.
+**Files:** `manifest.json`, `popup.html`, `popup.js`, `background.js`, `README.md`, `checks.cjs`.
 
-**Files:** `manifest.json`, `popup.html`, `popup.js`, `background.js`, `README.md`, `checks.cjs`. Record calibration beside the model rather than creating a separate reporting system.
-
-**Done when:** a fixed RAM fixture formats correctly; unavailable/invalid data is handled; eligibility and estimates agree with the actual bulk action; unloading failures do not appear as successes. Verify tooltips by mouse and keyboard in real Chrome.
+**Done when:** fixed RAM fixtures format correctly; unavailable/invalid data recovers on subsequent polls; actual system readings update without tab events; eligibility agrees with the actual bulk action; unloading failures do not appear as successes. Verify tooltips by mouse and keyboard in real Chrome.
 
 ## 02 — Unload from the tab-strip right-click menu
 
@@ -155,13 +152,20 @@ Checked against the official documentation on 2026-10-21; actual browser behavio
 
 ## Release acceptance
 
-- [ ] All six feature sections meet their done-when criteria. A measured-only 01 checkpoint does not close the estimate requirements; either calibrate them or explicitly agree a reduced release scope before calling the iteration complete.
-- [ ] The runnable check covers invalid memory readings, unavailable estimates, malicious/missing titles/URLs, deterministic grouping, duplicate/invalid IDs, mixed discard results, and tabs changing active/pinned/closed state during an action.
+- [ ] All six feature sections meet their done-when criteria. Feature 01 follows the revised measured-only scope with live polling and no estimates.
+- [ ] The runnable check covers live memory polling, invalid memory readings/recovery, malicious/missing titles/URLs, deterministic grouping, duplicate/invalid IDs, mixed discard results, and tabs changing active/pinned/closed state during an action.
 - [ ] Real Chrome checks cover multiple windows, active/pinned/only-tab cases, search/selection transitions, tab-strip/page/action menus, `Alt+U`, popup closure mid-action, and menu/preferences behavior after a worker restart.
 - [ ] Keyboard-only navigation, tooltip dismissal, checkbox explanations, focus restoration, accessible result announcements, empty/error/pending states, and scrolling work at the compact popup size. Test all four languages in both light and dark themes, System theme changes, browser-default fallback, and corrupt/missing preferences.
 - [ ] README and final store screenshots describe only verified behavior and the final permissions (`tabs`, `contextMenus`, `system.memory`, `storage`); all memory figures/caveats remain truthful. No new analytics, website permissions, remote code, or dependency/build tooling appears.
 
 ## Verification log
+
+### 2026-10-22 scope revision: no estimates, live system RAM
+
+- `node checks.cjs`: 18/18 checks pass. `node --check popup.js`, `node --check background.js`, and `node --check checks.cjs` pass.
+- Chrome for Testing 153.0.8010.12 / Ubuntu 24.04.4 LTS, isolated headless profile, unpacked extension page: actual `chrome.system.memory.getInfo()` succeeds and the popup renders system RAM without estimate messages. Sample fields: total 15.3 GiB, available 8.4 GiB, in use 6.9 GiB.
+- Browser timer check with injected changing API fixtures: two reads in 2.2 seconds, no tab queries, expected 16/3/13 GiB fields, unchanged row identity and keyboard focus, and tooltip limited to title/URL/state. This is a controlled polling check, not per-tab measurement.
+- Browser failure/recovery check: an injected rejected memory read changes all fields to "Unavailable" on the next tick; restoring the native API recovers actual readings automatically on the following tick. Three scenarios pass. Native action-popup sizing, OS menus/shortcuts, and human assistive-technology checks are not rerun for this revision.
 
 Feature 01 review performed on 2026-10-21; the final browser run ended at 23:53:06 UTC. Only this plan is changed by the review; existing implementation changes are preserved. No feature 02 implementation, commit, push, or publication is performed.
 

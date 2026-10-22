@@ -13,7 +13,7 @@
 - **Right-Click Context Menu:** Quick unload actions on pages, with an optional tab-strip entry on supporting Chrome versions.
 - **Keyboard Shortcuts:** Built-in configurable shortcuts (default: `Alt+U`).
 - **Tab Popup Search & Filter:** Filter open tabs and unload individually.
-- **System RAM Overview:** Total, available, and in-use physical RAM, labeled as system-wide rather than Chrome's usage. Failed or invalid readings show "Unavailable."
+- **Live System RAM Overview:** Total, available, and in-use physical RAM from Chrome's system memory API, refreshed every second while the popup is open. Labeled as system-wide rather than Chrome's usage; failed or invalid readings show "Unavailable."
 - **Tab Details:** Hover or keyboard-focus a row for its full title, URL, and loaded/unloaded state; Escape dismisses the tooltip.
 - **Zero Tracking & Minimal Permissions:** `tabs` for listing/unloading, `contextMenus` for menu actions, and `system.memory` for physical RAM readings. No analytics, URL history, content scripts, or background polling.
 
@@ -23,11 +23,9 @@ Unloading may lose unsaved changes. Tabs reload when revisited. The popup report
 
 Explicit single-tab actions (popup, page/tab-strip menu, or `Alt+U`) may unload pinned tabs. To unload an active tab, the extension first activates an already-loaded sibling in the same window. With no suitable loaded sibling, it skips the action instead of waking an unloaded tab. Bulk unloading never unloads active or pinned tabs and rechecks each candidate before discarding.
 
-System readings use GiB (1,073,741,824 bytes). Chrome Stable's tab API does not expose per-tab RAM, so loaded rows and potential savings currently show **"Estimate unavailable"**; unloaded rows show **"Unloaded,"** not measured zero RAM. An empty eligible set shows **"No eligible tabs."** A system RAM change is not evidence of memory saved by an individual tab.
+System readings use GiB (1,073,741,824 bytes). Total and available RAM come directly from `chrome.system.memory.getInfo()`; in-use RAM is total minus available, never a calculation based on the number of tabs. Readings refresh on popup open, every second while it remains open, on tab lifecycle changes, and after unload actions. Polling stops when the popup closes; no background polling runs.
 
-The estimate model in `popup.js` remains unset. As of October 22, 2026, no Chrome Task Manager calibration is recorded. The unpacked extension has been tested with isolated Chrome for Testing 156.0.8078.47 on Ubuntu 26.04.1 LTS x86_64 (headless). Before enabling any MiB range (1,048,576 bytes per MiB), record the date, exact Chrome version/OS, memory column, repeatable page states, independent sample count/range, and shared-renderer limitations beside that model. Never count shared renderers as independent tab samples. Even a calibrated eligible-count-times-range would be modeled potential, not measured or guaranteed savings.
-
-This is feature 01's measured-only implementation checkpoint, not completion of the estimate scope. All 16 Node checks and 13 real-Chrome scenarios at each of two virtual screen sizes (800x600 and 1280x900) pass, including popup actions, keyboard tooltips, pointer transfer, and constrained-height layout. Native OS shortcut/menu interaction, human assistive-technology checks, and estimate calibration remain unverified; the existing store screenshots have not been refreshed. See `PLAN.md` for evidence and the feature 02 handoff.
+Chrome Stable's tab API does not expose per-tab RAM, so the extension does not estimate per-tab memory or potential savings. Rows show only loaded/unloaded state alongside the full title and URL, and the bulk action shows the eligible-tab count. An empty eligible set shows **"No eligible tabs."** A system RAM change is not evidence of memory saved by an individual tab. See `PLAN.md` for verification history and remaining browser checks.
 
 ---
 

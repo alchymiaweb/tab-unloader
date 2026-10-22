@@ -6,9 +6,6 @@ const status = document.getElementById("status");
 const tooltip = document.getElementById("tab-tooltip");
 const numbers = new Intl.NumberFormat(navigator.language, { maximumFractionDigits: 1 });
 
-// ponytail: No defensible calibration yet; set a byte range only after documented Task Manager observations.
-const tabMemoryRangeBytes = null;
-
 let tabs = [];
 let invokingTabId;
 let tabsReady = false;
@@ -32,12 +29,6 @@ function systemMemoryText(info) {
     .map((bytes) => `${numbers.format(bytes / 1024 ** 3)} GiB`);
 }
 
-function estimateText(count = 1) {
-  if (!tabMemoryRangeBytes) return "Estimate unavailable";
-  const range = tabMemoryRangeBytes.map((bytes) => numbers.format(count * bytes / 1024 ** 2));
-  return `Estimated: ${range.join(" - ")} MiB (modeled, not measured)`;
-}
-
 function hideTooltip() {
   tooltip.hidden = true;
   tooltipRow = undefined;
@@ -48,8 +39,7 @@ function showTooltip(row, tab) {
   const details = [
     tab.title || tab.url || "Untitled tab",
     tab.url || "URL unavailable",
-    tab.discarded ? "Unloaded" : `Loaded. ${estimateText()}`,
-    "Per-tab RAM is not read from Chrome. Shared processes prevent exact attribution.",
+    tab.discarded ? "Unloaded" : "Loaded",
   ];
   tooltip.replaceChildren(...details.map((text) => {
     const line = document.createElement("div");
@@ -69,7 +59,7 @@ function updateActions() {
   others.disabled = pending || !tabsReady || !validTabId(invokingTabId) || count === 0;
   bulkInfo.textContent = "All accessible windows, regardless of search. " + (!tabsReady
     ? "Eligible tabs unavailable."
-    : count === 0 ? "No eligible tabs." : `Eligible tabs: ${numbers.format(count)}. ${estimateText(count)}.`);
+    : count === 0 ? "No eligible tabs." : `Eligible tabs: ${numbers.format(count)}.`);
   list.setAttribute("aria-busy", String(pending));
   for (const button of list.querySelectorAll("button")) {
     button.disabled = pending || button.dataset.unavailable === "true";
@@ -210,3 +200,5 @@ for (const event of [chrome.tabs.onCreated, chrome.tabs.onUpdated, chrome.tabs.o
   event.addListener(refresh);
 }
 void refresh();
+const memoryTimer = setInterval(refreshMemory, 1000);
+window.addEventListener("pagehide", () => clearInterval(memoryTimer), { once: true });

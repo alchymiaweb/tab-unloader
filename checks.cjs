@@ -122,6 +122,8 @@ function popupFixture(worker = workerFixture([tab(1, { active: true }), tab(2)])
   elements["tab-tooltip"] = document.createElement("div");
   elements["tab-tooltip"].hidden = true;
   const calls = { memory: 0, messages: 0 };
+  const intervals = new Map();
+  const window = { innerHeight: 600, listeners: {}, addEventListener: Element.prototype.addEventListener };
   worker.chrome.windows = { async getCurrent() { return { id: 1 }; } };
   worker.chrome.system = { memory: { async getInfo() {
     calls.memory += 1;
@@ -131,9 +133,17 @@ function popupFixture(worker = workerFixture([tab(1, { active: true }), tab(2)])
     calls.messages += 1;
     return options.sendMessage ? options.sendMessage(message) : worker.request(message);
   };
-  const context = vm.createContext({ chrome: worker.chrome, document, navigator: { language: options.locale || "en-US" }, window: { innerHeight: 600 } });
+  const context = vm.createContext({
+    chrome: worker.chrome, document, navigator: { language: options.locale || "en-US" }, window,
+    setInterval(callback, delay) {
+      const timerId = intervals.size + 1;
+      intervals.set(timerId, { callback, delay });
+      return timerId;
+    },
+    clearInterval(timerId) { intervals.delete(timerId); },
+  });
   vm.runInContext(popupSource, context, { filename: "popup.js" });
-  return { context, elements, document, calls, worker };
+  return { context, elements, document, calls, worker, intervals, window };
 }
 
 let passed = 0;
@@ -278,7 +288,61 @@ async function main() {
     const localized = popupFixture(undefined, { locale: "pt-BR" });
     await settle();
     assert.equal(localized.context.systemMemoryText({ capacity: 1.5 * 1024 ** 3, availableCapacity: 0 })[0], "1,5 GiB");
-    assert.equal(popup.context.estimateText(20), "Estimate unavailable");
+  });
+
+  await check("system RAM polls every second without tab events or list rerenders", async () => {
+    let reading = { capacity: 16 * 1024 ** 3, availableCapacity: 6 * 1024 ** 3 };
+    const popup = popupFixture(undefined, { getInfo: () => reading });
+    await settle();
+    assert.equal(popup.calls.memory, 1);
+    assert.equal(popup.intervals.size, 1);
+    const timer = [...popup.intervals.values()][0];
+    assert.equal(timer.delay, 1000);
+    const row = popup.elements.list.children[1];
+    row.focus();
+    const queries = popup.worker.calls.query.length;
+    const bulkText = popup.elements["bulk-info"].textContent;
+    reading = { capacity: 16 * 1024 ** 3, availableCapacity: 3 * 1024 ** 3 };
+    await timer.callback();
+    assert.equal(popup.calls.memory, 2);
+    assert.equal(popup.elements["memory-total"].textContent, "16 GiB");
+    assert.equal(popup.elements["memory-available"].textContent, "3 GiB");
+    assert.equal(popup.elements["memory-used"].textContent, "13 GiB");
+    assert.equal(popup.worker.calls.query.length, queries);
+    assert.equal(popup.elements.list.children[1], row);
+    assert.equal(popup.document.activeElement, row);
+    assert.equal(popup.elements["tab-tooltip"].hidden, false);
+    assert.equal(popup.elements["bulk-info"].textContent, bulkText);
+    popup.worker.state.set(3, tab(3));
+    await popup.worker.chrome.tabs.onCreated.listeners[0]();
+    assert.ok(popup.elements["bulk-info"].textContent.endsWith("Eligible tabs: 2."));
+    assert.equal(popup.elements["memory-available"].textContent, "3 GiB");
+    assert.equal(popup.elements["memory-used"].textContent, "13 GiB");
+    popup.window.listeners.pagehide[0]();
+    assert.equal(popup.intervals.size, 0);
+  });
+
+  await check("periodic RAM reads recover after API failures and invalid readings", async () => {
+    let reading = { capacity: 8 * 1024 ** 3, availableCapacity: 2 * 1024 ** 3 };
+    const popup = popupFixture(undefined, { getInfo() {
+      if (reading instanceof Error) throw reading;
+      return reading;
+    } });
+    await settle();
+    const timer = [...popup.intervals.values()][0];
+    for (const invalid of [new Error("Memory unavailable"), { capacity: 1, availableCapacity: 2 }]) {
+      reading = invalid;
+      await timer.callback();
+      for (const id of ["memory-total", "memory-available", "memory-used"]) {
+        assert.equal(popup.elements[id].textContent, "Unavailable");
+      }
+      assert.equal(popup.elements.others.disabled, false);
+    }
+    reading = { capacity: 8 * 1024 ** 3, availableCapacity: 5 * 1024 ** 3 };
+    await timer.callback();
+    assert.equal(popup.elements["memory-total"].textContent, "8 GiB");
+    assert.equal(popup.elements["memory-available"].textContent, "5 GiB");
+    assert.equal(popup.elements["memory-used"].textContent, "3 GiB");
   });
 
   await check("safe rows retain current-window priority and bulk scope ignores search", async () => {
@@ -289,7 +353,7 @@ async function main() {
     assert.deepEqual(popup.elements.list.children.map((row) => row.dataset.tabId), ["1", "2", "3", "4", "7", "6", "5"]);
     assert.equal(popup.elements.list.children[1].children[1].textContent, title);
     assert.equal(popup.elements.list.children[4].children[1].textContent, "Untitled tab");
-    assert.ok(popup.elements["bulk-info"].textContent.includes("Eligible tabs: 2. Estimate unavailable"));
+    assert.equal(popup.elements["bulk-info"].textContent, "All accessible windows, regardless of search. Eligible tabs: 2.");
     assert.equal(popup.elements.list.children[3].querySelector("button").textContent, "Unloaded");
     assert.equal(popup.elements.list.children[3].querySelector("button").disabled, true);
     popup.elements.filter.value = title;
@@ -309,7 +373,9 @@ async function main() {
     row.focus();
     assert.equal(popup.elements["tab-tooltip"].hidden, false);
     assert.ok(popup.elements["tab-tooltip"].textContent.includes("https://example.com/2"));
-    assert.ok(popup.elements["tab-tooltip"].textContent.includes("Loaded. Estimate unavailable"));
+    assert.deepEqual(popup.elements["tab-tooltip"].children.map((line) => line.textContent), ["Tab 2", "https://example.com/2", "Loaded"]);
+    await popup.context.showTooltip(row, tab(2, { discarded: true }));
+    assert.equal(popup.elements["tab-tooltip"].children[2].textContent, "Unloaded");
     assert.ok(Number.parseFloat(popup.elements["tab-tooltip"].style.top) >= 8);
     assert.ok(Number.parseFloat(popup.elements["tab-tooltip"].style.top) + 90 <= 592);
     popup.document.listeners.keydown[0]({ key: "Escape" });
@@ -364,7 +430,7 @@ async function main() {
     await popup.context.submitAction({ type: "unload-others", tabId: 1 });
     assert.equal(popup.elements.status.textContent, "Unloaded: 1; Skipped: 0; Failed: 0.");
     assert.ok(popup.elements["bulk-info"].textContent.includes("No eligible tabs."));
-    assert.ok(!popup.elements["bulk-info"].textContent.includes("Estimate unavailable"));
+    assert.equal(popup.elements["bulk-info"].textContent, "All accessible windows, regardless of search. No eligible tabs.");
     const unavailable = popupFixture(workerFixture([], { query() { throw new Error("Tabs unavailable"); } }));
     await settle();
     assert.equal(unavailable.elements["memory-total"].textContent, "16 GiB");
@@ -392,13 +458,14 @@ async function main() {
     assert.ok(popup.elements.list.textContent.includes("Fresh title"));
     assert.equal(popup.elements["memory-total"].textContent, "8 GiB");
     resolveTabs([tab(1, { active: true, title: "Stale title" })]);
+    await [...popup.intervals.values()][0].callback();
     resolveMemory({ capacity: 32 * 1024 ** 3, availableCapacity: 8 * 1024 ** 3 });
     await settle();
     assert.ok(!popup.elements.list.textContent.includes("Stale title"));
     assert.equal(popup.elements["memory-total"].textContent, "8 GiB");
   });
 
-  console.log(`\n${passed} checks passed. Browser verification and estimate calibration are tracked separately in PLAN.md.`);
+  console.log(`\n${passed} checks passed. Browser verification is tracked separately in PLAN.md.`);
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1; });
